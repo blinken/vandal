@@ -1,6 +1,8 @@
 # vandal
 ### A lighting and fan control system for campervans (or anything else)
 
+## Overview
+
 vandal is an ESP32-based 10-channel smart switch module for 12-24V DC systems, intended to control camper or RV lighting. It has
 
  * 7 switched-positive output channels, capable of each sourcing 5A at Vin (up to 27V) . All channels support fade, blink, breathe modes via an SX1509 driver.
@@ -16,4 +18,20 @@ vandal is an ESP32-based 10-channel smart switch module for 12-24V DC systems, i
 
 Protected lines feature diode clamping to 5V and 0V, and high-current lines include TVS diodes on the output.
 
-The PCB was created in KiCad. The software for the ESP32 doesn't exist yet.
+The software for the ESP32 doesn't exist yet.
+
+The PCB was created in KiCad. I have a few spare - if you're interested, [shoot me an email](mailto:blinken@gmail.com).
+
+The hardware and software for this project are Copyright 2020 Patrick Coleman.
+They are released under the GNU General Public License, version 3.0.
+
+## Schematic and board renders
+
+![schematic](https://raw.githubusercontent.com/blinken/vandal/main/pcb/renders/schematic-1200.png)
+[Full size PNG](https://raw.githubusercontent.com/blinken/vandal/main/pcb/renders/schematic.png) [PDF](https://github.com/blinken/vandal/raw/main/pcb/renders/schematic.pdf)
+
+![board top](https://raw.githubusercontent.com/blinken/vandal/main/pcb/renders/v1.0-top-1200.png)
+[Full size PNG](https://raw.githubusercontent.com/blinken/vandal/main/pcb/renders/v1.0-top.png)
+
+![board bottom](https://raw.githubusercontent.com/blinken/vandal/main/pcb/renders/v1.0-bottom-1200.png)
+[Full size PNG](https://raw.githubusercontent.com/blinken/vandal/main/pcb/renders/v1.0-bottom.png)
