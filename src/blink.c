@@ -31,9 +31,9 @@
 //    }
 //}
 
-#define I2C_SCL_GPIO				16				//GPIO pin
-#define I2C_SDA_GPIO				17				//GPIO pin
-#define I2C_FREQ_HZ					400000			//!< I2C master clock frequency
+#define I2C_SCL_GPIO				16
+#define I2C_SDA_GPIO				17
+#define I2C_FREQ_HZ					400000
 #define I2C_ADDR            0x3e
 #define I2C_WRITE_BIT				0
 #define I2C_READ_BIT				1
