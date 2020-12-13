@@ -5,31 +5,14 @@
    CONDITIONS OF ANY KIND, either express or implied.
 */
 #include <stdio.h>
+#include <unistd.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/queue.h"
 #include "esp_system.h"
 #include "driver/gpio.h"
 #include "driver/i2c.h"
-#include <unistd.h>
-
-#define BLINK_GPIO 13
-
-
-//void blinky(void *pvParameter)
-//{
-//
-//    gpio_pad_select_gpio(BLINK_GPIO);
-//    /* Set the GPIO as a push/pull output */
-//    gpio_set_direction(BLINK_GPIO, GPIO_MODE_OUTPUT);
-//    while(1) {
-//        /* Blink off (output low) */
-//        gpio_set_level(BLINK_GPIO, 0);
-//        vTaskDelay(1000 / portTICK_RATE_MS);
-//        /* Blink on (output high) */
-//        gpio_set_level(BLINK_GPIO, 1);
-//        vTaskDelay(1000 / portTICK_RATE_MS);
-//    }
-//}
+#include "driver/pcnt.h"
 
 #define I2C_SCL_GPIO				16
 #define I2C_SDA_GPIO				17
@@ -126,8 +109,106 @@ void blinken_i2c_test() {
   }
 }
 
+#define GPIO_SW_BUTTON 39
+#define GPIO_SW_ROT_B 36
+#define GPIO_SW_ROT_A 35
+
+#define GPIO_SW_PIN_SEL  ((1ULL<<GPIO_SW_BUTTON) | (1ULL<<GPIO_SW_ROT_A) | (1ULL<<GPIO_SW_ROT_B))
+#define ESP_INTR_FLAG_DEFAULT 0
+
+static void IRAM_ATTR pcnt_example_intr_handler(void *arg) {
+	uint32_t intr_status = PCNT.int_st.val;
+
+	for (int i = 0; i < PCNT_UNIT_MAX; i++) {
+		if (intr_status & (BIT(i))) {
+
+			if(PCNT.status_unit[i].h_lim_lat){
+				printf("Hit high limit\n");
+			}
+			if(PCNT.status_unit[i].l_lim_lat){
+				printf("Hit low limit\n");
+			}
+			//pcnt_counter_clear(ptr->unit);
+			PCNT.int_clr.val = BIT(i); // clear the interrupt
+		}
+	}
+}
+
+
+void rotary_input() {
+	gpio_pad_select_gpio(GPIO_SW_ROT_A);
+	gpio_pad_select_gpio(GPIO_SW_ROT_B);
+	gpio_set_direction(GPIO_SW_ROT_A, GPIO_MODE_INPUT);
+	gpio_set_direction(GPIO_SW_ROT_B, GPIO_MODE_INPUT);
+  gpio_pullup_en(GPIO_SW_ROT_A);
+	gpio_pullup_en(GPIO_SW_ROT_B);
+
+  pcnt_config_t r_enc_config;
+  // channel 0
+  r_enc_config.pulse_gpio_num = GPIO_SW_ROT_A; //Rotary Encoder Chan A
+	r_enc_config.ctrl_gpio_num = GPIO_SW_ROT_B;    //Rotary Encoder Chan B
+
+	r_enc_config.unit = PCNT_UNIT_0;
+	r_enc_config.channel = PCNT_CHANNEL_0;
+
+	r_enc_config.pos_mode = PCNT_COUNT_DIS; // PCNT_COUNT_DEC;
+	r_enc_config.neg_mode = PCNT_COUNT_INC;
+
+	r_enc_config.lctrl_mode = PCNT_MODE_KEEP;    // Rising A on HIGH B = CW Step
+	r_enc_config.hctrl_mode = PCNT_MODE_REVERSE; // Rising A on LOW B = CCW Step
+
+	r_enc_config		.counter_h_lim = 255;
+	r_enc_config		.counter_l_lim = 0;
+
+	pcnt_unit_config(&r_enc_config);
+
+  // channel 1 - disabled for half-quad encoder
+  r_enc_config.pulse_gpio_num = GPIO_SW_ROT_A; //Rotary Encoder Chan A
+	r_enc_config.ctrl_gpio_num = GPIO_SW_ROT_B;    //Rotary Encoder Chan B
+	r_enc_config.channel = PCNT_CHANNEL_1;
+	r_enc_config.pos_mode = PCNT_COUNT_DIS; //PCNT_COUNT_INC;
+	r_enc_config.neg_mode = PCNT_COUNT_DIS; //PCNT_COUNT_DEC;
+	r_enc_config.lctrl_mode = PCNT_MODE_DISABLE;
+	r_enc_config.hctrl_mode = PCNT_MODE_DISABLE;
+	pcnt_unit_config(&r_enc_config);
+
+  pcnt_set_filter_value(PCNT_UNIT_0, 1023);  // Filter Runt Pulses
+	pcnt_filter_enable(PCNT_UNIT_0);
+
+  /* Enable events on maximum and minimum limit values */
+	//pcnt_event_enable(PCNT_UNIT_0, PCNT_EVT_H_LIM);
+	//pcnt_event_enable(PCNT_UNIT_0, PCNT_EVT_L_LIM);
+
+	pcnt_counter_pause(PCNT_UNIT_0); // Initial PCNT init
+	pcnt_counter_clear(PCNT_UNIT_0);
+
+	/* Register ISR handler and enable interrupts for PCNT unit */
+  //esp_err_t er = pcnt_isr_register(pcnt_example_intr_handler,(void *) NULL, (int)0, NULL);
+  //if (er != ESP_OK){
+  //  printf("Encoder wrap interrupt failed\n");
+  //}
+  //
+  //pcnt_isr_handler_add(PCNT_UNIT_0, pcnt_example_intr_handler, (void *)NULL);
+	pcnt_intr_enable(PCNT_UNIT_0);
+	pcnt_counter_resume(PCNT_UNIT_0);
+
+  int16_t val=0, oldval=0;
+  while (1) {
+    pcnt_get_counter_value(PCNT_UNIT_0, &val);
+    if (val != oldval) {
+      printf("%20s %d\n", "Encoder value", val);
+    }
+
+    oldval = val;
+
+	  vTaskDelay(100 / portTICK_RATE_MS);
+  }
+
+}
+
 void app_main()
 {
     xTaskCreate(&blinken_i2c_test, "blinken_i2c_test", 2048,NULL,5,NULL );
+    xTaskCreate(&rotary_input, "rotary_input", 2048,NULL,5,NULL );
 }
 
