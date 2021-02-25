@@ -6,25 +6,31 @@
 */
 #include <stdio.h>
 #include <unistd.h>
+#include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
 #include "esp_system.h"
+#include "esp_err.h"
 #include "driver/gpio.h"
 #include "driver/i2c.h"
 #include "driver/pcnt.h"
+#include "16-segment-font.h"
 
+#define I2C_ADDR_IOEXP      0x3e
+#define I2C_ADDR_NUM_A      0x70
+#define I2C_ADDR_NUM_B      0x71
 #define I2C_SCL_GPIO				16
 #define I2C_SDA_GPIO				17
-#define I2C_FREQ_HZ					400000
-#define I2C_ADDR            0x3e
+#define I2C_FREQ_HZ					200000
 #define I2C_WRITE_BIT				0
 #define I2C_READ_BIT				1
 #define I2C_ACK_CHECK_EN    true
+#define I2C_WAIT            2*I2C_FREQ_HZ
 
-bool i2c_write(uint8_t reg, uint8_t value, char *description) {
+bool i2c_write(uint8_t addr, uint8_t reg, uint8_t value, char *description) {
 
-  uint8_t write_addr = (I2C_ADDR<<1) | I2C_WRITE_BIT;
+  uint8_t write_addr = (addr<<1) | I2C_WRITE_BIT;
 
 	i2c_cmd_handle_t cmd = i2c_cmd_link_create();
 	i2c_master_start(cmd);
@@ -33,7 +39,8 @@ bool i2c_write(uint8_t reg, uint8_t value, char *description) {
 	i2c_master_write_byte(cmd, value, I2C_ACK_CHECK_EN);
 	i2c_master_stop(cmd);
 	printf("%20s (0x%02x) = 0x%02x: ", description, reg, value);
-	esp_err_t i2c_ret = i2c_master_cmd_begin(I2C_NUM_1, cmd, (1000 / portTICK_RATE_MS));	//"(# / portTICK_RATE_MS)"=maximum wait time. This task will be blocked until all the commands have been sent (not thread-safe - if you want to use one I2C port in different tasks you need to take care of multi-thread issues)
+	esp_err_t i2c_ret = i2c_master_cmd_begin(I2C_NUM_1, cmd, I2C_WAIT);	//"(# / portTICK_RATE_MS)"=maximum wait time. This task will be blocked until all the commands have been sent (not thread-safe - if you want to use one I2C port in different tasks you need to take care of multi-thread issues)
+  ESP_ERROR_CHECK_WITHOUT_ABORT(i2c_ret);
   i2c_cmd_link_delete(cmd);
 
   if (i2c_ret == ESP_OK) {
@@ -45,7 +52,114 @@ bool i2c_write(uint8_t reg, uint8_t value, char *description) {
   }
 }
 
-void blinken_i2c_test() {
+bool i2c_setup_num(uint8_t addr) {
+
+  uint8_t write_addr = (addr<<1) | I2C_WRITE_BIT;
+
+	i2c_cmd_handle_t cmd = i2c_cmd_link_create();
+	i2c_master_start(cmd);
+	i2c_master_write_byte(cmd, write_addr, I2C_ACK_CHECK_EN);
+	i2c_master_write_byte(cmd, 0x21, I2C_ACK_CHECK_EN); // system setup
+	i2c_master_stop(cmd);
+	esp_err_t i2c_ret = i2c_master_cmd_begin(I2C_NUM_1, cmd, I2C_WAIT);
+  ESP_ERROR_CHECK_WITHOUT_ABORT(i2c_ret);
+  i2c_cmd_link_delete(cmd);
+
+	cmd = i2c_cmd_link_create();
+	i2c_master_start(cmd);
+	i2c_master_write_byte(cmd, write_addr, I2C_ACK_CHECK_EN);
+	i2c_master_write_byte(cmd, 0xA0, I2C_ACK_CHECK_EN); // row/int setup
+	i2c_master_stop(cmd);
+	i2c_ret = i2c_master_cmd_begin(I2C_NUM_1, cmd, I2C_WAIT);
+  ESP_ERROR_CHECK_WITHOUT_ABORT(i2c_ret);
+  i2c_cmd_link_delete(cmd);
+
+	cmd = i2c_cmd_link_create();
+	i2c_master_start(cmd);
+	i2c_master_write_byte(cmd, write_addr, I2C_ACK_CHECK_EN);
+	i2c_master_write_byte(cmd, 0x81, I2C_ACK_CHECK_EN); // display setup
+	i2c_master_stop(cmd);
+	i2c_ret = i2c_master_cmd_begin(I2C_NUM_1, cmd, I2C_WAIT);
+  ESP_ERROR_CHECK_WITHOUT_ABORT(i2c_ret);
+  i2c_cmd_link_delete(cmd);
+
+
+	cmd = i2c_cmd_link_create();
+	i2c_master_start(cmd);
+	i2c_master_write_byte(cmd, write_addr, I2C_ACK_CHECK_EN);
+	i2c_master_write_byte(cmd, 0xEF, I2C_ACK_CHECK_EN); // full brightness
+	i2c_master_stop(cmd);
+	i2c_ret = i2c_master_cmd_begin(I2C_NUM_1, cmd, I2C_WAIT);
+  ESP_ERROR_CHECK_WITHOUT_ABORT(i2c_ret);
+  i2c_cmd_link_delete(cmd);
+
+
+  if (i2c_ret == ESP_OK) {
+    printf("Setup num %02x succeeded.\n", addr);
+    return true;
+  } else {
+    printf("Setup num %02x failed.\n", addr);
+    return false;
+  }
+}
+
+bool i2c_update_num(uint8_t addr, uint8_t *buf, int len) {
+  uint8_t write_addr = (addr<<1) | I2C_WRITE_BIT;
+
+	i2c_cmd_handle_t cmd = i2c_cmd_link_create();
+	i2c_master_start(cmd);
+	i2c_master_write_byte(cmd, write_addr, I2C_ACK_CHECK_EN);
+	i2c_master_write_byte(cmd, 0x00, I2C_ACK_CHECK_EN);
+
+  if (len>4)
+    len=4;
+
+  for (int i=0; i<len; i++) {
+    i2c_master_write_byte(cmd, (uint8_t)(alphafonttable[buf[i]]) & 0xff, I2C_ACK_CHECK_EN);
+    i2c_master_write_byte(cmd, (uint8_t)(alphafonttable[buf[i]]) >> 8, I2C_ACK_CHECK_EN);
+  }
+
+	i2c_master_stop(cmd);
+
+	esp_err_t i2c_ret = i2c_master_cmd_begin(I2C_NUM_1, cmd, I2C_WAIT);
+  ESP_ERROR_CHECK_WITHOUT_ABORT(i2c_ret);
+  i2c_cmd_link_delete(cmd);
+
+  if (i2c_ret == ESP_OK) {
+    printf("Buffer update %02x succeeded.\n", addr);
+    return true;
+  } else {
+    printf("Buffer update %02x failed.\n", addr);
+    return false;
+  }
+}
+
+bool i2c_write_ioexp(uint8_t reg, uint8_t value, char *description) {
+  return i2c_write(I2C_ADDR_IOEXP, reg, value, description);
+}
+
+bool i2c_write_num_a(uint8_t reg, uint8_t value, char *description) {
+  return i2c_write(I2C_ADDR_NUM_A, reg, value, description);
+}
+
+bool i2c_write_num_b(uint8_t reg, uint8_t value, char *description) {
+  return i2c_write(I2C_ADDR_NUM_B, reg, value, description);
+}
+
+void num_config() {
+  i2c_setup_num(I2C_ADDR_NUM_A);
+  i2c_setup_num(I2C_ADDR_NUM_B);
+
+  uint8_t buf_a[4] = "abcd", buf_b[4] = "abcd";
+  //memset(buf_a, 0xaa, sizeof(buf_a));
+  //memset(buf_b, 0xff, sizeof(buf_b));
+
+  // First digit on
+  i2c_update_num(I2C_ADDR_NUM_A, buf_a, sizeof(buf_a));
+  i2c_update_num(I2C_ADDR_NUM_B, buf_b, sizeof(buf_b));
+}
+
+void i2c_setup() {
 	i2c_config_t conf;
 	conf.mode = I2C_MODE_MASTER;
 	conf.sda_io_num = 17;
@@ -55,56 +169,53 @@ void blinken_i2c_test() {
 	conf.master.clk_speed = I2C_FREQ_HZ;
 	i2c_param_config(I2C_NUM_1, &conf);
 	i2c_driver_install(I2C_NUM_1, conf.mode, 0, 0, 0);
+}
 
-  for (int i=0; i<5; i++) {
-    printf("Waiting to start\n");
-    vTaskDelay(1000 / portTICK_RATE_MS);
-  }
-
-  i2c_write(0x01, 0xff, "regInputDisableA");
-  i2c_write(0x09, 0xff, "regPullDownA");
-  i2c_write(0x0b, 0x00, "regOpenDrainA"); // disabled - push pull operation
-  i2c_write(0x0f, 0x00, "regDirA");
-  i2c_write(0x1e, 0x40, "regClock");
-  i2c_write(0x1f, 0x30, "regMisc"); // set LED clock to 2Mhz/(2^^3-1)
-  i2c_write(0x21, 0xff, "regLedDriverEnableA");
-  i2c_write(0x0d, 0x00, "regPolarityA"); // explicitly set polarities - on startup, these seem to be inverted (0xff)
-  i2c_write(0x0c, 0x00, "regPolarityB");
+void ioexp_config() {
+  i2c_write_ioexp(0x01, 0xff, "regInputDisableA");
+  i2c_write_ioexp(0x09, 0xff, "regPullDownA");
+  i2c_write_ioexp(0x0b, 0x00, "regOpenDrainA"); // disabled - push pull operation
+  i2c_write_ioexp(0x0f, 0x00, "regDirA");
+  i2c_write_ioexp(0x1e, 0x40, "regClock");
+  i2c_write_ioexp(0x1f, 0x30, "regMisc"); // set LED clock to 2Mhz/(2^^3-1)
+  i2c_write_ioexp(0x21, 0xff, "regLedDriverEnableA");
+  i2c_write_ioexp(0x0d, 0x00, "regPolarityA"); // explicitly set polarities - on startup, these seem to be inverted (0xff)
+  i2c_write_ioexp(0x0c, 0x00, "regPolarityB");
 
   // MOSFET1 - breathe when off
-  i2c_write(0x35, 0x0f, "regTOn4");
-  i2c_write(0x36, 0xff, "regTIOn4");
-  i2c_write(0x37, 0x0f, "regOff4");
-  i2c_write(0x38, 0x0f, "regTRise4");
-  i2c_write(0x39, 0x0f, "regTFall4");
+  i2c_write_ioexp(0x35, 0x0f, "regTOn4");
+  i2c_write_ioexp(0x36, 0xff, "regTIOn4");
+  i2c_write_ioexp(0x37, 0x0f, "regOff4");
+  i2c_write_ioexp(0x38, 0x0f, "regTRise4");
+  i2c_write_ioexp(0x39, 0x0f, "regTFall4");
 
   // MOSFET2 - breathe when off
-  i2c_write(0x3a, 0x0f, "regTOn5");
-  i2c_write(0x3b, 0xff, "regTIOn5");
-  i2c_write(0x3c, 0x0f, "regOff5");
-  i2c_write(0x3d, 0x0f, "regTRise5");
-  i2c_write(0x3e, 0x0f, "regTFall5");
+  i2c_write_ioexp(0x3a, 0x0f, "regTOn5");
+  i2c_write_ioexp(0x3b, 0xff, "regTIOn5");
+  i2c_write_ioexp(0x3c, 0x0f, "regOff5");
+  i2c_write_ioexp(0x3d, 0x0f, "regTRise5");
+  i2c_write_ioexp(0x3e, 0x0f, "regTFall5");
 
   // MOSFET3 - "one-shot mode" - fade off then back on when turned off
-  i2c_write(0x3f, 0x0f, "regTOn6");
-  i2c_write(0x40, 0xff, "regTIOn6");
-  i2c_write(0x41, 0x00, "regOff6");
-  i2c_write(0x42, 0x0f, "regTRise6");
-  i2c_write(0x43, 0x0f, "regTFall6");
+  i2c_write_ioexp(0x3f, 0x0f, "regTOn6");
+  i2c_write_ioexp(0x40, 0xff, "regTIOn6");
+  i2c_write_ioexp(0x41, 0x00, "regOff6");
+  i2c_write_ioexp(0x42, 0x0f, "regTRise6");
+  i2c_write_ioexp(0x43, 0x0f, "regTFall6");
 
   // MOSFET4 - fade on, fade off
-  i2c_write(0x44, 0x00, "regTOn7");
-  i2c_write(0x45, 0xff, "regTIOn7");
-  i2c_write(0x46, 0x00, "regOff7");
-  i2c_write(0x47, 0x0f, "regTRise7");
-  i2c_write(0x48, 0x0f, "regTFall7");
+  i2c_write_ioexp(0x44, 0x00, "regTOn7");
+  i2c_write_ioexp(0x45, 0xff, "regTIOn7");
+  i2c_write_ioexp(0x46, 0x00, "regOff7");
+  i2c_write_ioexp(0x47, 0x0f, "regTRise7");
+  i2c_write_ioexp(0x48, 0x0f, "regTFall7");
 
   // I/O pins on outputs 0-3 are on-off without fades
 
   uint8_t state = 0xff;
-  i2c_write(0x11, state, "regDataA");
+  i2c_write_ioexp(0x11, state, "regDataA");
   while (1) {
-    i2c_write(0x11, (state=~state), "regDataA");
+    i2c_write_ioexp(0x11, (state=~state), "regDataA");
 	  vTaskDelay(10000 / portTICK_RATE_MS);
   }
 }
@@ -208,7 +319,15 @@ void rotary_input() {
 
 void app_main()
 {
-    xTaskCreate(&blinken_i2c_test, "blinken_i2c_test", 2048,NULL,5,NULL );
+    
+    for (int i=0; i<5; i++) {
+      printf("Waiting to start\n");
+      vTaskDelay(500 / portTICK_RATE_MS);
+    }
+
+    i2c_setup();
+    num_config();
+    xTaskCreate(&ioexp_config, "ioexp_config", 2048,NULL,5,NULL );
     xTaskCreate(&rotary_input, "rotary_input", 2048,NULL,5,NULL );
 }
 

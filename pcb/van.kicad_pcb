@@ -11,11 +11,11 @@
 
   (page A4)
   (layers
-    (0 F.Cu signal hide)
+    (0 F.Cu signal)
     (31 B.Cu signal hide)
     (32 B.Adhes user hide)
     (33 F.Adhes user hide)
-    (34 B.Paste user)
+    (34 B.Paste user hide)
     (35 F.Paste user)
     (36 B.SilkS user)
     (37 F.SilkS user hide)
